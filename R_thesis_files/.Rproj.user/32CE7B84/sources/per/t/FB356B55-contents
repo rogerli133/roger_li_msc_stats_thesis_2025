@@ -1,0 +1,17 @@
+---
+title: "ch3_kriging"
+author: "Roger Li - ETHZ MSc Stats"
+date: "2025-04-02"
+output: pdf_document
+---
+
+```{r}
+library(gstat)
+library(sp)
+data(meuse)
+```
+
+```{r}
+variogram(meuse.all)
+```
+

@@ -1,0 +1,252 @@
+---
+title: "thesis_simulation_example"
+author: "Roger Li - ETHZ MSc Stats"
+date: "2025-07-30"
+output: pdf_document
+---
+
+```{r}
+library(tidyverse)
+library(gridExtra)
+```
+
+
+## Simple Setting
+
+### Data Generation
+
+```{r}
+set.seed(1)
+
+# Simulation Parameters
+N <- 1000
+n <- 25
+x <- seq(from = 0, to = 25, length.out = N)
+beta_1 <- 1 / 2
+sigma_gt <- 2
+sigma_mp <- 4
+bias_mp2 <- 1.1
+bias_mp3 <- 1.1
+bias_mp4x <- 1.1
+bias_mp4y <- 1.1
+
+# Simulate ground truth data
+x_gt <- sample(x, n)
+eps_gt <- rnorm(n, 0, sigma_gt)
+y_gt <- beta_1 * x_gt + eps_gt
+simple_gt <- data.frame(x = x_gt, y = y_gt)
+
+# Extra noise (mp1)
+eps_mp1 <- rnorm(N, 0, sigma_mp)
+x_mp1 <- x
+y_mp1 <- beta_1 * x + eps_mp1
+
+# Error in x (mp2)
+eps_mp2 <- rnorm(N, 0, sigma_mp)
+x_mp2 <- bias_mp2 * x
+y_mp2 <- beta_1 * x + eps_mp2
+
+# Error in y (mp3)
+eps_mp3 <- rnorm(N, 0, sigma_mp)
+x_mp3 <- x
+y_mp3 <- bias_mp3 * (beta_1 * x_mp3 + eps_mp3)
+
+# Error in both (mp4)
+eps_mp4 <- rnorm(N, 0, sigma_mp)
+x_mp4 <- bias_mp4x * x
+y_mp4 <- bias_mp4y * (beta_1 * x + eps_mp4)
+```
+
+### Arrange data for ggplot
+
+```{r}
+df_gt <- simple_gt
+df_mp1 <- data.frame(x = x, y = y_mp1, method = "mp1")
+df_mp2 <- data.frame(x = x, y = y_mp2, method = "mp2")
+df_mp3 <- data.frame(x = x, y = y_mp3, method = "mp3")
+df_mp4 <- data.frame(x = x, y = y_mp4, method = "mp4")
+```
+
+### Plots
+
+```{r}
+p1 <- ggplot() +
+  geom_point(data = df_mp1, aes(x = x, y = y), color = "steelblue") +
+  geom_point(data = df_gt, aes(x = x, y = y), color = "coral", size = 2) +
+  labs(title = "mp1", x = "x", y = "y") +
+  theme_minimal()
+
+p2 <- ggplot() +
+  geom_point(data = df_mp2, aes(x = x, y = y), color = "steelblue") +
+  geom_point(data = df_gt, aes(x = x, y = y), color = "coral", size = 2) +
+  labs(title = "mp2", x = "x", y = "y") +
+  theme_minimal()
+
+p3 <- ggplot() +
+  geom_point(data = df_mp3, aes(x = x, y = y), color = "steelblue") +
+  geom_point(data = df_gt, aes(x = x, y = y), color = "coral", size = 2) +
+  labs(title = "mp3", x = "x", y = "y") +
+  theme_minimal()
+
+p4 <- ggplot() +
+  geom_point(data = df_mp4, aes(x = x, y = y), color = "steelblue") +
+  geom_point(data = df_gt, aes(x = x, y = y), color = "coral", size = 2) +
+  labs(title = "mp4", x = "x", y = "y") +
+  theme_minimal()
+
+ggsave(
+  "simple_simul_plot.png",
+  grid.arrange(p1, p2, p3, p4, ncol = 2),
+  path = "images",
+  scale = 2,
+  width = 1200,
+  height = 600,
+  units = "px")
+```
+
+## 2D Setting
+
+### Data Generation
+
+```{r}
+set.seed(1)
+
+# helper fns
+closest_dist <- function(m, b, x0, y0) {
+  abs(m * x0 - y0 + b) / sqrt(m^2 + 1)
+}
+
+compute_y <- function(x_df, eps, bias_term = 1) {
+  bias_term * ((beta_lon * x_df$lon) + (beta_lat * x_df$lat) + (beta_dist * x_df$dist) + eps)
+}
+
+# Simulation parameters
+m <- 8
+b <- -76 
+beta_lat <- 2/3
+beta_lon <- -4/3
+beta_dist <- 3/2
+bias_mp2 <- 1.1
+bias_mp3 <- 1.1
+bias_mp4 <- 1.1
+sigma_gt <- 2
+sigma_mp <- 4
+side_dens <- 35
+
+# Create initial data
+lon <- seq(from = 1, to = 25, length.out = side_dens)
+lat <- seq(from = 1, to = 25, length.out = side_dens)
+coord_df <- data.frame(expand.grid(lon = lon, lat = lat))
+                       
+# Compute dist
+coord_df$dist <- closest_dist(m, b, coord_df$lon, coord_df$lat)
+    
+N <- nrow(coord_df)
+n <- 25
+
+# Sample ground truth indices
+gt_ind <- sample(1:N, n)
+    
+# Generate ground truth outcome
+eps_gt <- rnorm(N, 0, sigma_gt)
+y_gt_all <- beta_lat * coord_df$lat + beta_lon * coord_df$lon + beta_dist * coord_df$dist + eps_gt
+y_gt <- rep(NA, N)
+y_gt[gt_ind] <- y_gt_all[gt_ind]
+gt_df <- data.frame(lon = coord_df$lon[gt_ind], lat = coord_df$lat[gt_ind], dist = coord_df$dist[gt_ind], y = y_gt[gt_ind])
+
+# Increase noise (mp1)
+eps_mp1 <- rnorm(N, 0, sigma_mp)
+x_mp1 <- coord_df
+y_mp1 <- compute_y(x_mp1, eps_mp1)
+
+# Error in x (mp2)
+eps_mp2 <- rnorm(N, 0, sigma_mp)
+x_mp2 <- coord_df %>% 
+  mutate(lon = bias_mp2 * lon, dist = bias_mp2 * dist)
+y_mp2 <- compute_y(x_mp2, eps_mp2)
+
+# Error in y (mp3)
+eps_mp3 <- rnorm(N, 0, sigma_mp)
+x_mp3 <- coord_df
+y_mp3 <- compute_y(x_mp3, eps_mp3, bias_mp3)
+
+# Error in both (mp4)
+eps_mp4 <- rnorm(N, 0, sigma_mp)
+x_mp4 <- coord_df %>% 
+  mutate(lon = bias_mp4 * lon, dist = bias_mp4 * dist)
+y_mp4 <- compute_y(x_mp4, eps_mp4, bias_mp4)
+```
+
+### Arrange Data for ggplot
+
+```{r}
+# create data frame for all simulated data
+interm_df <- coord_df %>%
+  mutate(
+    y_gt = NA_real_,
+    y_gt = replace(y_gt, gt_ind, y_gt_all[gt_ind]),
+    y_mp1 = y_mp1,
+    y_mp2 = y_mp2,
+    y_mp3 = y_mp3,
+    y_mp4 = y_mp4
+  )
+```
+
+### Plots
+
+```{r}
+# gt points
+gt_plot_df <- interm_df %>%
+  filter(!is.na(y_gt))
+
+# plot for mp1
+p1 <- ggplot(interm_df, aes(x = lon, y = lat, fill = y_mp1)) +
+  geom_raster() +
+  scale_fill_viridis_c() +
+  geom_point(data = gt_plot_df, aes(size = y_gt), color = "white", shape = 1) +
+  geom_abline(slope = m, intercept = b, color = "red", linetype = "dashed") +
+ guides(size = "none") +
+  labs(title = "mp1") +
+  theme_minimal()
+
+# plot for mp2
+p2 <- ggplot(interm_df, aes(x = lon, y = lat, fill = y_mp2)) +
+  geom_raster() +
+  scale_fill_viridis_c() +
+  geom_point(data = gt_plot_df, aes(size = y_gt), color = "white", shape = 1) +
+  geom_abline(slope = m, intercept = b, color = "red", linetype = "dashed") +
+  guides(size = "none") +
+  labs(title = "mp2") +
+  theme_minimal()
+
+# plot for mp3
+p3 <- ggplot(interm_df, aes(x = lon, y = lat, fill = y_mp3)) +
+  geom_raster() +
+  scale_fill_viridis_c() +
+  geom_point(data = gt_plot_df, aes(size = y_gt), color = "white", shape = 1) +
+  geom_abline(slope = m, intercept = b, color = "red", linetype = "dashed") +
+  guides(size = "none") +
+  labs(title = "mp3") +
+  theme_minimal()
+
+# plot for mp4
+p4 <- ggplot(interm_df, aes(x = lon, y = lat, fill = y_mp4)) +
+  geom_raster() +
+  scale_fill_viridis_c() +
+  geom_point(data = gt_plot_df, aes(size = y_gt), color = "white", shape = 1) +
+  geom_abline(slope = m, intercept = b, color = "red", linetype = "dashed") +
+  guides(size = "none") +
+  labs(title = "mp4") +
+  theme_minimal()
+
+# combine plots
+ggsave(
+  "intermediate_simul_plot.png",
+  grid.arrange(p1, p2, p3, p4, ncol = 2),
+  path = "images",
+  scale = 2,
+  width = 1200,
+  height = 600,
+  units = "px")
+```
+

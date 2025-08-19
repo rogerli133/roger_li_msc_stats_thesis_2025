@@ -1,0 +1,1 @@
+{"frames":[{"func":"variogram(meuse.all)","file":"","line_number":0,"end_line_number":0,"character_number":0,"end_character_number":0},{"func":"variogram.default(meuse.all)","file":"","line_number":0,"end_line_number":0,"character_number":0,"end_character_number":0}],"message":"Error in variogram.default(meuse.all) : \n  argument \"locations\" is missing, with no default\n"}

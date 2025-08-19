@@ -1,0 +1,5 @@
+"0","variogram(meuse.all)
+"
+"2","Error in variogram.default(meuse.all) : 
+  argument ""locations"" is missing, with no default
+"

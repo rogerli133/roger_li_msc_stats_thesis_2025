@@ -1,0 +1,449 @@
+---
+title: "thesis_application"
+author: "Roger Li - ETHZ MSc Stats"
+date: "2025-07-24"
+output: pdf_document
+---
+
+```{r include=FALSE, results='hide'}
+library(knitr)
+library(tidyverse)
+library(gridExtra)
+library(grid)
+library(RColorBrewer)
+library(ipd)
+library(randomForest)
+library(xtable)
+library(PTDBoot)
+library(mice)
+source("ppi_wine_example/ppi_rewrite.R")
+```
+
+# PPI++ Logistic Regression (Error in Y)
+
+## Wine Data Set
+
+## Create Dataset
+
+```{r}
+set.seed(1)
+
+wine <- read_delim("data/winequality-white.csv", delim = ";")
+
+winedf <- wine %>% 
+  sample_n(2400) %>%
+  mutate(
+    label = sample(c(rep("expert", 100), rep("novice", 2300))),
+    chlorides_std = as.numeric(scale(chlorides)),
+    density_std = as.numeric(scale(density)),
+    high_quality = ifelse(quality >= 6, 1, 0),
+    .keep = "unused"
+  ) %>% 
+  rename_with(~ make.names(.x))
+
+test <- summary(glm(high_quality ~ ., data = winedf, family = "binomial"))
+
+winedf <- winedf %>% 
+  bind_rows(
+    winedf %>%
+      filter(label == "expert") %>%
+      mutate(label = "novice")
+  )
+
+random_flip <- function(quality_vector) {
+  false_ind <- quality_vector == 0
+  flip_ind <- sample(c(TRUE, FALSE), length(quality_vector), TRUE, c(0.15, 0.85)) * false_ind
+  quality_vector[flip_ind] <- as.integer(quality_vector[flip_ind] - 1) * -1
+  quality_vector
+}
+
+wine_exp <- winedf %>% 
+  filter(label == "expert")
+
+wine_nov <- winedf %>% 
+  filter(label == "novice") %>% 
+  mutate(high_quality = random_flip(high_quality))
+
+winedf <- rbind(wine_exp, wine_nov)
+
+write_csv(winedf, file = "data/wine_quality_labelled.csv")
+```
+
+## Read Dataset
+
+```{r}
+set.seed(1)
+
+wine <- read_csv("data/wine_quality_labelled.csv")
+
+# randomForest needs response to be a factor for classification
+winedf <- wine %>% 
+  mutate(high_quality = factor(high_quality))
+
+# separate data into expert and novice dfs
+wine_exp <- winedf %>% 
+  filter(label == "expert") %>% 
+  select(-label)
+
+wine_nov <- winedf %>% 
+  filter(label == "novice") %>% 
+  select(-label)
+```
+
+## ML Model
+
+```{r}
+# create the ml model on novice data
+wine_rf <- randomForest(
+  high_quality ~ .,
+  data = wine_nov, 
+  importance = TRUE,
+  mtry = 3,
+  ntree = 1000,
+  replace = TRUE,
+  sampsize = 100,
+  strata = high_quality)
+
+# create predictions
+
+wine_nov_preds <- wine_rf$predicted           # f(X~)
+wine_exp_preds <- predict(wine_rf, wine_exp)  # f(X)
+```
+
+## PPI++
+
+```{r}
+# recreate dfs to undo the factor from earlier
+wine_exp <- wine %>% 
+  filter(label == "expert") %>% 
+  select(-label)
+
+wine_nov <- wine %>% 
+  filter(label == "novice") %>% 
+  select(-label)
+
+# ppi_plusplus_logistic requires matrices as inputs
+# data needs additional intercept column
+X_l <- cbind(as.matrix(wine_exp[, -12]))
+Y_l <- as.matrix(wine_exp[, 12])
+f_l <- as.matrix(as.numeric(as.character(wine_exp_preds)))
+X_u <- cbind(as.matrix(wine_nov[, -12]))
+f_u <- as.matrix(as.numeric(as.character(wine_nov_preds)))
+
+# stores all ppi++ outputs and intermediate values
+wine_ppi <- ppi_plusplus_logistic(
+  X_l = cbind(1, X_l),
+  Y_l = Y_l,
+  f_l = f_l,
+  X_u = cbind(1, X_u), 
+  f_u = f_u
+)
+
+# coef and se estimates for ppi++
+ppi_coef <- t(wine_ppi$est)[-1]
+ppi_se <- wine_ppi$se[-1]
+```
+
+## Compare with normal glm
+
+```{r}
+glm_exp <- glm(high_quality ~ ., family = "binomial", data = wine_exp)
+glm_nov <- glm(high_quality ~ ., family = "binomial", data = wine_nov)
+
+ppi_coef <- t(wine_ppi$est)[-1]
+expert_coef <- glm_exp$coefficients[-1]
+novice_coef <- glm_nov$coefficients[-1] 
+ppi_se <- wine_ppi$se[-1]
+expert_se <- summary(glm_exp)$coefficients[, "Std. Error"][-1]
+novice_se <- summary(glm_nov)$coefficients[, "Std. Error"][-1]
+```
+
+## Arrange data for pltos
+
+```{r}
+coef_df <- data.frame(
+  term = names(expert_coef),
+  ppi_estimate = ppi_coef,
+  ppi_se = ppi_se,
+  expert_estimate = expert_coef,
+  expert_se = expert_se,
+  novice_estimate = novice_coef,
+  novice_se <- novice_se
+  ) %>%
+  mutate(
+    ppi_lower = ppi_estimate - 1.96 * ppi_se,
+    ppi_upper = ppi_estimate + 1.96 * ppi_se,
+    expert_lower = expert_estimate - 1.96 * expert_se,
+    expert_upper = expert_estimate + 1.96 * expert_se,
+    novice_lower = novice_estimate - 1.96 * novice_se,
+    novice_upper = novice_estimate + 1.96 * novice_se
+  ) %>%
+  pivot_longer(
+    cols = -term,
+    names_to = c("model", ".value"),
+    names_pattern = "(ppi|expert|novice)_(.*)"
+  ) %>%
+  mutate(
+    odds_ratio = exp(estimate),
+    or_lower = exp(lower),
+    or_upper = exp(upper),
+    includes_one = ifelse(or_lower <= 1 & or_upper >= 1, "Yes", "No")
+  ) %>% 
+  mutate(model = factor(model, levels = c("ppi", "expert", "novice")))
+
+min_lower <- min(coef_df$or_lower, na.rm = TRUE)
+marker_y <- min_lower * 0.9
+```
+
+## Plots
+
+```{r}
+pd <- position_dodge(width = 0.5)
+
+ggplot(coef_df, aes(x = term, y = odds_ratio, color = model, shape = model)) +
+  geom_point(size = 2, position = pd, stroke = 1.2) +
+  geom_errorbar(aes(ymin = or_lower, ymax = or_upper), width = 0.2, position = pd, size = 1) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "red", linewidth = 1) +
+  geom_point(
+    data = coef_df %>% filter(includes_one == "No"),
+    aes(x = term, y = marker_y, color = model, shape = model),
+    size = 6,
+    shape = 95, 
+    position = pd,
+    inherit.aes = FALSE
+  ) +
+  scale_color_manual(
+    name = "Model",
+    values = c("ppi" = "coral", "expert" = "steelblue", "novice" = "darkgreen")
+  ) +
+  scale_shape_manual(
+    name = "Model",
+    values = c("ppi" = 17, "expert" = 19, "novice" = 15)
+  ) +
+  scale_y_log10() +
+  labs(
+    title = "Odds Ratios with 95% CI: PPI++, Expert GLM, & Novice GLM",
+    x = "Predictor",
+    y = "Odds Ratio (log scale)"
+  ) +
+  theme_minimal() +
+  theme(
+    panel.spacing = unit(4, "lines"),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+ggsave(
+  filename = "wine_ci_plot.png",
+  path = "images",
+  scale = 2,
+  width = 1200,
+  height = 600,
+  units = "px",
+  bg = "white")
+```
+
+# PTD Logistic Regression (Error in Y)
+
+## US General Social Survery 
+
+## Create Dataset
+
+```{r}
+set.seed(1)
+
+# read and clean data
+usgss <- read.csv("data/us_social_survey.csv")[, -1] %>% 
+  filter(year >= 1990) %>% 
+  filter(age >= 40) %>% 
+  mutate(immigrant = immigrant == "yes") %>% 
+  mutate(city16 = city16 == "yes") %>% 
+  mutate(lowincome16 = lowincome16 == "yes") %>% 
+  mutate(iscaucasian = ethnicity == "cauc", .keep = "unused") %>% 
+  select(-agefirstbirth) %>% 
+  mutate(across(where(is.logical), as.numeric)) %>% 
+  mutate(    
+    age_std = as.numeric(scale(age)),
+    education_std = as.numeric(scale(education)),
+    siblings_std = as.numeric(scale(siblings)),
+    .keep = "unused"
+    )
+  
+
+# separate data for gt and remote map
+usgss98 <- usgss %>% 
+  filter(year != 2002) %>% 
+  sample_n(2000)
+
+usgss02 <- usgss %>% 
+  filter(year == 2002)  %>% 
+  sample_n(100)
+
+usgss_df <- rbind(usgss98, usgss02)
+
+# write dataset
+write_csv(usgss_df, file = "data/usgss02_labelled.csv")
+```
+
+## Read Dataset
+
+```{r}
+set.seed(1)
+
+usgss_df <- read_csv("data/usgss02_labelled.csv")
+
+usgss_98 <- usgss_df %>% 
+  filter(year != 2002) %>% 
+  select(-year)
+usgss_02 <- usgss_df %>% 
+  filter(year == 2002) %>% 
+  select(-year)
+```
+
+## Predict/Impute Complete, Gold-Standard Dataset
+
+```{r}
+# create the ml imputation on old census data
+train_x <- usgss_98 %>% select(-kids) %>% data.matrix()
+train_y <- usgss_98$kids
+dtrain <- lgb.Dataset(data = train_x, label = train_y)
+
+params <- list(
+  objective = "regression",  
+  metric = "regression", 
+  learning_rate = 0.05,
+  num_leaves = 30,
+  max_depth = -1, 
+  feature_fraction = 0.8,
+  bagging_fraction = 0.8,
+  bagging_freq = 5
+)
+
+lgb_model <- lgb.train(
+  params,
+  dtrain,
+  nrounds = 1000,
+  valids = list(train = dtrain),
+  early_stopping_rounds = 50,
+  verbose = 0
+)
+
+# predict number of kids with new census data
+test_x <- usgss_02 %>% select(-kids) %>% data.matrix()
+usgss02_preds <- predict(lgb_model, test_x)
+
+usgss_imp <- usgss_02
+usgss_imp$kids <- usgss02_preds
+```
+
+## PTD
+
+```{r}
+# ptd bootstrapping
+usgss_ptd <- PTD_bootstrap.glm(
+  true_data_completeSamp = usgss_02,
+  predicted_data_completeSamp = usgss_imp,
+  predicted_data_incompleteSamp = usgss_98,
+  regFormula.glm = "kids ~ .",
+  GLM_type = "linear",
+  alpha = 0.05,
+  B = 2000,
+  TuningScheme = "Optimal", 
+  speedup = TRUE
+)
+
+# store coefficient estimates and confidence intervals
+ptd_ci <- usgss_ptd$PTD_Boot_CIs[-1, ]
+ptd_coef <- t(usgss_ptd$PTD_estimate)[-1]
+```
+
+## Compare with normal glm
+
+```{r}
+glm_02 <- glm(kids ~ ., family = "gaussian", data = usgss_02)
+glm_98 <- glm(kids ~ ., family = "gaussian", data = usgss_98)
+
+usgss02_coef <- glm_02$coefficients[-1]
+usgss98_coef <- glm_98$coefficients[-1] 
+
+usgss02_ci <- confint(glm_02)[-1, ]
+usgss98_ci <- confint(glm_98)[-1, ]
+```
+
+## Arrange data for pltos
+
+```{r}
+coef_df <- data.frame(
+  term = names(usgss02_coef),
+  ptd_estimate = ptd_coef,
+  usgss02_estimate = usgss02_coef,
+  usgss98_estimate = usgss98_coef
+  ) %>%
+  mutate(
+    ptd_lower = ptd_ci[, 1],
+    ptd_upper = ptd_ci[, 2],
+    usgss02_lower = usgss02_ci[, 1],
+    usgss02_upper = usgss02_ci[, 2],
+    usgss98_lower = usgss98_ci[, 1],
+    usgss98_upper = usgss98_ci[, 2]
+  ) %>%
+  pivot_longer(
+    cols = -term,
+    names_to = c("model", ".value"),
+    names_pattern = "(ptd|usgss02|usgss98)_(.*)"
+  ) %>%
+  mutate(
+    includes_zero = ifelse(lower <= 0 & upper >= 0, "Yes", "No")
+  )
+
+min_lower <- min(coef_df$lower, na.rm = TRUE)
+marker_y <- min_lower * 0.9
+```
+
+## Plots
+
+```{r}
+pd <- position_dodge(width = 0.5)
+
+ggplot(coef_df, aes(x = term, y = estimate, color = model, shape = model)) +
+  geom_point(size = 2, position = pd, stroke = 1.2) +
+  geom_errorbar(aes(ymin = lower, ymax = upper), 
+                width = 0.2, position = pd, size = 1) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red", size = 1) +
+  geom_point(
+    data = coef_df %>% filter(includes_zero == "No"),
+    aes(x = term, y = marker_y, color = model, shape = model),
+    size = 6,
+    shape = 95,
+    position = pd,
+    inherit.aes = FALSE
+  ) +
+  scale_color_manual(
+    name = "Model",
+    values = c("ptd" = "coral", "usgss02" = "steelblue", "usgss98" = "darkgreen")
+  ) +
+  scale_shape_manual(
+    name = "Model",
+    values = c("ptd" = 17, "usgss02" = 19, "usgss98" = 15)
+  ) +
+  labs(
+    title = "Coefficient Estimates with 95% CI: PTD, USGSS 98 GLM, USGSS 02 GLM",
+    x = "Predictor",
+    y = "Coefficient"
+  ) +
+  theme_minimal() +
+  theme(
+    panel.spacing = unit(4, "lines"),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+# Save the plot
+ggsave(
+  filename = "usgss_ci_plot.png",
+  path = "images",
+  scale = 2,
+  width = 1200,
+  height = 600,
+  units = "px",
+  bg = "white"
+)
+```
