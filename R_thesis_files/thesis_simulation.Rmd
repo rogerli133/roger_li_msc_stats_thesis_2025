@@ -13,8 +13,8 @@ library(grid)
 library(RColorBrewer)
 library(randomForest)
 library(ipd)
-library(devtools)
-install_github("DanKluger/PTDBoot")
+# library(devtools)
+# install_github("DanKluger/PTDBoot")
 library(PTDBoot)
 ```
 
@@ -73,7 +73,7 @@ bias_mp4x <- 1.1
 bias_mp4y <- 0.9
 
 # Create values of n (amount of gt data used)
-n_values <- c(30, 50, 100, 200, 400, 1000)
+n_values <- c(50, 100, 200, 400, 1000)
 
 # Data frame to store results across varying n values
 coverage_results <- data.frame()
@@ -244,6 +244,8 @@ save(coverage_results, width_results, file = "ci_results_simple.R")
 
 ### Plot CI Coverage
 
+#### Full Plot
+
 ```{r}
 coverage_long <- pivot_longer(
   coverage_results,
@@ -264,10 +266,37 @@ ggplot(coverage_long, aes(x = n, y = coverage, color = method)) +
        x = "Sample Size (n)",
        y = "Coverage") +
   theme_minimal() +
-  theme(panel.spacing = unit(4, "lines"))
+  theme(panel.spacing = unit(4, "lines")) +
+  coord_cartesian(ylim = c(0.85, 1))
 
 ggsave(
-  "simple_ci_coverage.png",
+  "simple_ci_coverage_trunc.png",
+  path = "images",
+  scale = 2,
+  width = 1200,
+  height = 600,
+  units = "px",
+  bg = "white")
+```
+
+#### Truncated Plot
+
+```{r}
+ggplot(coverage_long, aes(x = n, y = coverage, color = method)) +
+  geom_point(size = 1.5, position = pd) +
+  geom_line(position = pd, linewidth = 1) +
+  scale_color_manual(name = "method", values = c("coral", "steelblue", "darkgreen", "gray")) +
+  geom_hline(yintercept = 0.95, color = "red", linetype = "dotted", size = 1.3) +
+  facet_wrap(~ setting, scales = "free_x") +
+  labs(title = "Coverage Probability by Sample Size",
+       x = "Sample Size (n)",
+       y = "Coverage") +
+  theme_minimal() +
+  theme(panel.spacing = unit(4, "lines")) +
+  coord_cartesian(ylim = c(0.85, 1))
+
+ggsave(
+  "simple_ci_coverage_trunc.png",
   path = "images",
   scale = 2,
   width = 1200,
@@ -355,7 +384,7 @@ bias_mp4y <- 0.9
 sigma_gt <- 2
 sigma_mp <- 4
 side_dens <- 35
-num_runs <- 120
+num_runs <- 475
 
 # Create initial data
 lon <- seq(from = 1, to = 25, length.out = side_dens)
@@ -368,7 +397,7 @@ coord_df$dist <- closest_dist(m, b, coord_df$lon, coord_df$lat)
 N <- nrow(coord_df)
 
 # Create values of n (amount of gt data used)
-n_values <- c(50, 100, 200, 400, 1000)
+n_values <- c(70, 100, 200, 400, 1000)
 
 # True coefficients vector for coverage checking
 true_betas <- c(lon = beta_lon, lat = beta_lat, dist = beta_dist)
@@ -627,9 +656,8 @@ ggsave(
   bg = "white")
 ```
 
-# (LARGE) Conifdence Interval Simulation
 
-## Simple Setting
+## Larger Dataset
 
 ### Helper Functions
 
@@ -682,7 +710,7 @@ bias_mp4x <- 1.1
 bias_mp4y <- 0.9
 
 # Create values of n (amount of gt data used)
-n_values <- c(50, 200, 500, 1000, 2500, 5000)
+n_values <- c(100, 200, 500, 1000, 2500, 5000)
 
 # Data frame to store results across varying n values
 coverage_results <- data.frame()
@@ -871,7 +899,8 @@ ggsave(
   scale = 2,
   width = 1200,
   height = 600,
-  units = "px")
+  units = "px",
+  bg = "white")
 ```
 
 ### Plot CI Width
@@ -900,327 +929,7 @@ ggsave(
   scale = 2,
   width = 1200,
   height = 600,
-  units = "px")
-```
-
-## 2D Setting
-
-### Helper Function
-
-```{r}
-closest_dist <- function(m, b, x0, y0) {
-  abs(m * x0 - y0 + b) / sqrt(m^2 + 1)
-}
-
-f_interm <- function(model, df) {
-  predict(model, df[, c("lon", "lat", "dist")])
-}
-
-ppi_conf_int <- function(ppi) {
-  point_est <- ppi$est
-  se <- ppi$se
-  conf_int_lon <- point_est[1] + c(-1, 1) * 1.96 * se[1]
-  conf_int_lat <- point_est[2] + c(-1, 1) * 1.96 * se[2]
-  conf_int_dist <- point_est[3] + c(-1, 1) * 1.96 * se[3]
-  conf_int <- rbind(conf_int_lon, conf_int_lat, conf_int_dist)
-  rownames(conf_int) <- c("lon", "lat", "dist")
-  conf_int
-}
-
-compute_y <- function(x_df, eps, bias_term = 1) {
-  bias_term * ((beta_lon * x_df$lon) + (beta_lat * x_df$lat) + (beta_dist * x_df$dist)+ eps)
-}
-```
-
-### Simulation
-
-```{r warning=FALSE}
-set.seed(1)
-
-m <- 8
-b <- -76 
-
-# Simulation parameters
-beta_lat <- 2/3
-beta_lon <- -4/3
-beta_dist <- 3/2
-bias_mp2 <- 1.1
-bias_mp3 <- 1.1
-bias_mp4lon <- 1.1
-bias_mp4dist <- 0.9
-bias_mp4y <- 0.9
-sigma_gt <- 2
-sigma_mp <- 4
-side_dens <- 150
-num_runs <- 475
-
-# Create initial data
-lon <- seq(from = 1, to = 25, length.out = side_dens)
-lat <- seq(from = 1, to = 25, length.out = side_dens)
-coord_df <- data.frame(expand.grid(lon = lon, lat = lat))
-                       
-# Compute dist
-coord_df$dist <- closest_dist(m, b, coord_df$lon, coord_df$lat)
-    
-N <- nrow(coord_df)
-
-# Create values of n (amount of gt data used)
-n_values <- c(50, 200, 500, 1000, 2500, 5000)
-
-# True coefficients vector for coverage checking
-true_betas <- c(lon = beta_lon, lat = beta_lat, dist = beta_dist)
-coef_names <- names(true_betas)
-methods <- c("gt", "naive", "ppi", "ptd")
-all_cols <- unlist(lapply(coef_names, function(x) paste0(x, "_", methods)))
-
-# Data frames to store results
-coverage_results <- data.frame()
-width_results <- data.frame()
-
-for (n in n_values) {
-  coverage_storage <- list()
-  width_storage <- list()
-  
-  for (setting in c("mp1", "mp2", "mp3", "mp4")) {
-    # Initialize matrices with all needed columns
-    coverage_storage[[setting]] <- matrix(NA, nrow = num_runs, ncol = length(all_cols),
-                                          dimnames = list(NULL, all_cols))
-    width_storage[[setting]] <- matrix(NA, nrow = num_runs, ncol = length(all_cols),
-                                       dimnames = list(NULL, all_cols))
-  }
-  
-  for (run in 1:num_runs) {
-    # Prints progress
-    if((run-1) %% 100 == 0) {
-      cat(
-        "Current iteration: ", which(n_values == n), "/", length(n_values),
-        " Sample size: ", n,
-        " Run Number: ", run,  
-        "\n", sep = "")
-    }
-    
-    # Sample ground truth indices
-    gt_ind <- sample(1:N, n)
-    
-    # Generate ground truth outcome
-    eps_gt <- rnorm(N, 0, sigma_gt)
-    y_gt_all <- beta_lat * coord_df$lat + beta_lon * coord_df$lon + beta_dist * coord_df$dist + eps_gt
-    y_gt <- rep(NA, N)
-    y_gt[gt_ind] <- y_gt_all[gt_ind]
-    gt_df <- data.frame(lon = coord_df$lon[gt_ind], lat = coord_df$lat[gt_ind], dist = coord_df$dist[gt_ind], y = y_gt[gt_ind])
-    
-    # Increase noise (mp1)
-    eps_mp1 <- rnorm(N, 0, sigma_mp)
-    x_mp1 <- coord_df
-    y_mp1 <- compute_y(x_mp1, eps_mp1)
-    
-    # Error in x (mp2)
-    eps_mp2 <- rnorm(N, 0, sigma_mp)
-    x_mp2 <- coord_df %>% 
-      mutate(lon = bias_mp2 * lon, dist = bias_mp2 * dist)
-    y_mp2 <- compute_y(coord_df, eps_mp2)
-    
-    # Error in y (mp3)
-    eps_mp3 <- rnorm(N, 0, sigma_mp)
-    x_mp3 <- coord_df
-    y_mp3 <- compute_y(x_mp3, eps_mp3, bias_mp3)
-    
-    # Error in both (mp4)
-    eps_mp4 <- rnorm(N, 0, sigma_mp)
-    x_mp4 <- coord_df %>% 
-      mutate(lon = bias_mp4lon * lon, dist = bias_mp4dist * dist)
-    y_mp4 <- compute_y(coord_df, eps_mp3, bias_mp4y)
-
-    
-    mp_dfs <- list(
-      mp1 = cbind(x_mp1, y = y_mp1),
-      mp2 = cbind(x_mp2, y = y_mp2),
-      mp3 = cbind(x_mp3, y = y_mp3),
-      mp4 = cbind(x_mp4, y = y_mp4)
-    )
-    
-    # Create list that says which variable is remotely/noisily sensed
-    mp_noisy_vars <- list(
-      mp1 = c("y"),
-      mp2 = c("lon", "dist"),
-      mp3 = c("y"),
-      mp4 = c("lon", "dist", "y")
-    )
-    
-    for (setting in names(mp_dfs)) {
-      mp_df <- mp_dfs[[setting]]
-      
-      # Ground truth OLS (on labeled data only)
-      ols_gt <- lm(y ~ lon + lat + dist, data = gt_df)
-      ci_gt <- confint(ols_gt)
-      
-      # Naive OLS (replace mp points with ground truth at gt_ind)
-      mp_naive_df <- mp_df
-      mp_naive_df[gt_ind, ] <- gt_df
-      ols_naive <- lm(y ~ lon + lat + dist, data = mp_naive_df)
-      ci_naive <- confint(ols_naive)
-      
-      # PPI++ fit
-      f_l <- f_interm(ols_naive, gt_df)
-      f_u <- f_interm(ols_naive, mp_df)
-      ppi <- ppi_plusplus_ols(
-        X_l = as.matrix(gt_df[, c("lon", "lat", "dist")]),
-        Y_l = as.matrix(gt_df$y),
-        f_l = as.matrix(f_l),
-        X_u = as.matrix(mp_df[, c("lon", "lat", "dist")]),
-        f_u = as.matrix(f_u)
-      )
-      
-      ppi_all_ci <- ppi_conf_int(ppi)
-      
-      # Initialize ppi ci matrix
-      ci_ppi <- matrix(NA, nrow = 3, ncol = 2, dimnames = list(coef_names, c("2.5 %", "97.5 %")))
-      
-      # Store ci for each variable
-      for (coef_name in coef_names) {
-        ci_ppi[coef_name, ] <- ppi_all_ci[coef_name, ]
-      }
-      
-      # PTD CI
-      noisy_vars <- mp_noisy_vars[[setting]]
-      simple_join <- gt_df
-      simple_join[, noisy_vars] <- mp_df[gt_ind, noisy_vars]
-      
-      ptd <- PTD_bootstrap.glm(
-        true_data_completeSamp = gt_df,
-        predicted_data_completeSamp = simple_join,
-        predicted_data_incompleteSamp = mp_df,
-        regFormula.glm = "y ~ lat + lon + dist",
-        GLM_type = "linear",
-        alpha = 0.05,
-        B = 1000,
-        TuningScheme = "Optimal", 
-        speedup = TRUE
-      )
-      ci_ptd <- ptd$PTD_Boot_CIs[2:4, ]
-      
-      # Store coverage and widths for all methods
-      for (coef_name in coef_names) {
-        coverage_storage[[setting]][run, paste0(coef_name, "_gt")] <- 
-          (ci_gt[coef_name, 1] <= true_betas[coef_name]) & (ci_gt[coef_name, 2] >= true_betas[coef_name])
-        coverage_storage[[setting]][run, paste0(coef_name, "_naive")] <- 
-          (ci_naive[coef_name, 1] <= true_betas[coef_name]) & (ci_naive[coef_name, 2] >= true_betas[coef_name])
-        coverage_storage[[setting]][run, paste0(coef_name, "_ppi")] <- 
-          (ci_ppi[coef_name, 1] <= true_betas[coef_name]) & (ci_ppi[coef_name, 2] >= true_betas[coef_name])
-        coverage_storage[[setting]][run, paste0(coef_name, "_ptd")] <- 
-          (ci_ptd[coef_name, 1] <= true_betas[coef_name]) & (ci_ptd[coef_name, 2] >= true_betas[coef_name])
-        
-        width_storage[[setting]][run, paste0(coef_name, "_gt")] <- ci_gt[coef_name, 2] - ci_gt[coef_name, 1]
-        width_storage[[setting]][run, paste0(coef_name, "_naive")] <- ci_naive[coef_name, 2] - ci_naive[coef_name, 1]
-        width_storage[[setting]][run, paste0(coef_name, "_ppi")] <- ci_ppi[coef_name, 2] - ci_ppi[coef_name, 1]
-        width_storage[[setting]][run, paste0(coef_name, "_ptd")] <- ci_ptd[coef_name, 2] - ci_ptd[coef_name, 1]
-      }
-    }
-  }
-  
-  # Summarize coverage & widths for each setting and coefficient
-  for (setting in names(coverage_storage)) {
-    cov_df <- as.data.frame(coverage_storage[[setting]])
-    cov_summary <- data.frame(
-      n = n,
-      setting = setting,
-      method = rep(methods, each = length(coef_names)),
-      coef = rep(coef_names, times = length(methods)),
-      coverage = c(
-        colMeans(cov_df[, paste0(coef_names, "_gt")], na.rm = TRUE),
-        colMeans(cov_df[, paste0(coef_names, "_naive")], na.rm = TRUE),
-        colMeans(cov_df[, paste0(coef_names, "_ppi")], na.rm = TRUE),
-        colMeans(cov_df[, paste0(coef_names, "_ptd")], na.rm = TRUE)
-      )
-    )
-    coverage_results <- rbind(coverage_results, cov_summary)
-    
-    wid_df <- as.data.frame(width_storage[[setting]])
-    wid_summary <- data.frame(
-      n = n,
-      setting = setting,
-      method = rep(methods, each = length(coef_names)),
-      coef = rep(coef_names, times = length(methods)),
-      mean_width = c(
-        colMeans(wid_df[, paste0(coef_names, "_gt")], na.rm = TRUE),
-        colMeans(wid_df[, paste0(coef_names, "_naive")], na.rm = TRUE),
-        colMeans(wid_df[, paste0(coef_names, "_ppi")], na.rm = TRUE),
-        colMeans(wid_df[, paste0(coef_names, "_ptd")], na.rm = TRUE)
-      )
-    )
-    width_results <- rbind(width_results, wid_summary)
-  }
-}
-
-# Store results
-save(coverage_results, width_results, file = "ci_results_2d_large.R")
-```
-
-### Plot CI Coverage
-
-```{r}
-pd <- position_dodge(width = 0.8)
-
-coverage_long <- coverage_results %>%
-  pivot_wider(names_from = method, values_from = coverage) %>%
-  pivot_longer(cols = c("gt", "naive", "ppi", "ptd"), names_to = "method", values_to = "coverage")
-
-p_ci_coverage <- ggplot(coverage_long, aes(x = n, y = coverage, color = method)) +
-  geom_point(aes(shape = method), size = 3, position = pd) +
-  geom_line(position = pd, size = 1) +
-  geom_hline(yintercept = 0.95, color = "red", linetype = "dotted", size = 1.3) +
-  facet_grid(setting ~ coef, scales = "free_y") +   # key change here
-  scale_color_manual(name = "method", values = c("coral", "steelblue", "darkgreen", "gray")) +
-  scale_shape_manual(name = "method", values = c(17, 19, 15, 13)) +
-  labs(
-    title = "Coverage Probability by Sample Size",
-    x = "Sample Size (n)",
-    y = "Coverage"
-  ) +
-  theme_minimal() +
-  theme(panel.spacing = unit(3, "lines"))
-
-p_ci_coverage
-
-ggsave(
-  "2d_ci_coverage_large.png",
-  path = "images",
-  scale = 2,
-  width = 1200,
-  height = 1200,
   units = "px",
   bg = "white")
 ```
 
-### Plot CI Width
-
-```{r}
-width_long <- width_results %>%
-  pivot_wider(names_from = method, values_from = mean_width) %>%
-  pivot_longer(cols = c("gt", "naive", "ppi", "ptd"), names_to = "method", values_to = "width")
-
-p_ci_width <- ggplot(width_long, aes(x = n, y = width, color = method)) +
-  geom_point(aes(shape = method), size = 3, position = pd) +
-  geom_line(position = pd, size = 1) +
-  facet_grid(setting ~ coef, scales = "free_y") + 
-  scale_color_manual(name = "method", values = c("coral", "steelblue", "darkgreen", "gray")) +
-  scale_shape_manual(name = "method", values = c(17, 19, 15, 13)) +
-  labs(
-    title = "Average CI Width by Sample Size",
-    x = "Sample Size (n)",
-    y = "CI Width"
-  ) +
-  theme_minimal() +
-  theme(panel.spacing = unit(3, "lines"))
-
-p_ci_width
-
-ggsave(
-  "2d_ci_width_large.png",
-  path = "images",
-  scale = 2,
-  width = 1200,
-  height = 1200,
-  units = "px",
-  bg = "white")
-```

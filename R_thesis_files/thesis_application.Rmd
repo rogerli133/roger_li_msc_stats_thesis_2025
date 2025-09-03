@@ -13,9 +13,7 @@ library(grid)
 library(RColorBrewer)
 library(ipd)
 library(randomForest)
-library(xtable)
 library(PTDBoot)
-library(mice)
 source("ppi_wine_example/ppi_rewrite.R")
 ```
 
@@ -31,28 +29,35 @@ set.seed(1)
 wine <- read_delim("data/winequality-white.csv", delim = ";")
 
 winedf <- wine %>% 
-  sample_n(2400) %>%
+  sample_n(3100) %>%
   mutate(
-    label = sample(c(rep("expert", 100), rep("novice", 2300))),
+    label = sample(c(rep("expert", 100), rep("novice", 3000))),
     chlorides_std = as.numeric(scale(chlorides)),
     density_std = as.numeric(scale(density)),
+    sulphates_std = as.numeric(scale(sulphates)),
+    pH_std = as.numeric(scale(pH)),
+    volatile_acidity_std = as.numeric(scale(`volatile acidity`)),
+    citric_acid_std = as.numeric(scale(`citric acid`)),
+    
     high_quality = ifelse(quality >= 6, 1, 0),
     .keep = "unused"
   ) %>% 
   rename_with(~ make.names(.x))
 
-test <- summary(glm(high_quality ~ ., data = winedf, family = "binomial"))
+wine_true <- winedf %>% 
+  select(-label)
+
+write_csv(wine_true, file = "data/wine_quality_true.csv")
 
 winedf <- winedf %>% 
   bind_rows(
     winedf %>%
       filter(label == "expert") %>%
-      mutate(label = "novice")
+      mutate(label = "compare")
   )
 
 random_flip <- function(quality_vector) {
-  false_ind <- quality_vector == 0
-  flip_ind <- sample(c(TRUE, FALSE), length(quality_vector), TRUE, c(0.15, 0.85)) * false_ind
+  flip_ind <- sample(c(TRUE, FALSE), length(quality_vector), TRUE, c(0.30, 0.70))
   quality_vector[flip_ind] <- as.integer(quality_vector[flip_ind] - 1) * -1
   quality_vector
 }
@@ -64,7 +69,11 @@ wine_nov <- winedf %>%
   filter(label == "novice") %>% 
   mutate(high_quality = random_flip(high_quality))
 
-winedf <- rbind(wine_exp, wine_nov)
+wine_compare <- winedf %>% 
+  filter(label == "compare") %>% 
+  mutate(high_quality = random_flip(high_quality))
+
+winedf <- rbind(wine_exp, wine_nov, wine_compare)
 
 write_csv(winedf, file = "data/wine_quality_labelled.csv")
 ```
@@ -74,46 +83,10 @@ write_csv(winedf, file = "data/wine_quality_labelled.csv")
 ```{r}
 set.seed(1)
 
+wine_true <- read_csv("data/wine_quality_true.csv")
 wine <- read_csv("data/wine_quality_labelled.csv")
 
-# randomForest needs response to be a factor for classification
-winedf <- wine %>% 
-  mutate(high_quality = factor(high_quality))
-
 # separate data into expert and novice dfs
-wine_exp <- winedf %>% 
-  filter(label == "expert") %>% 
-  select(-label)
-
-wine_nov <- winedf %>% 
-  filter(label == "novice") %>% 
-  select(-label)
-```
-
-## ML Model
-
-```{r}
-# create the ml model on novice data
-wine_rf <- randomForest(
-  high_quality ~ .,
-  data = wine_nov, 
-  importance = TRUE,
-  mtry = 3,
-  ntree = 1000,
-  replace = TRUE,
-  sampsize = 100,
-  strata = high_quality)
-
-# create predictions
-
-wine_nov_preds <- wine_rf$predicted           # f(X~)
-wine_exp_preds <- predict(wine_rf, wine_exp)  # f(X)
-```
-
-## PPI++
-
-```{r}
-# recreate dfs to undo the factor from earlier
 wine_exp <- wine %>% 
   filter(label == "expert") %>% 
   select(-label)
@@ -122,21 +95,30 @@ wine_nov <- wine %>%
   filter(label == "novice") %>% 
   select(-label)
 
+# separate the wines tasted by both expert and novices (Y1, f(X1)), ..., (Yn, f(Xn))
+wine_compare <- wine %>% 
+  filter(label == "compare") %>% 
+  select(-label)
+```
+
+## PPI++
+
+```{r}
 # ppi_plusplus_logistic requires matrices as inputs
 # data needs additional intercept column
 X_l <- cbind(as.matrix(wine_exp[, -12]))
 Y_l <- as.matrix(wine_exp[, 12])
-f_l <- as.matrix(as.numeric(as.character(wine_exp_preds)))
+f_l <- as.matrix(wine_compare[, 12])
 X_u <- cbind(as.matrix(wine_nov[, -12]))
-f_u <- as.matrix(as.numeric(as.character(wine_nov_preds)))
+f_u <- as.matrix(wine_nov[, 12])
 
 # stores all ppi++ outputs and intermediate values
 wine_ppi <- ppi_plusplus_logistic(
-  X_l = cbind(1, X_l),
-  Y_l = Y_l,
-  f_l = f_l,
-  X_u = cbind(1, X_u), 
-  f_u = f_u
+  X_l = cbind(1, X_l),   # X
+  Y_l = Y_l,             # Y
+  f_l = f_l,             # f(X)
+  X_u = cbind(1, X_u),   # ~X~
+  f_u = f_u,             # f(~X~)
 )
 
 # coef and se estimates for ppi++
@@ -148,14 +130,16 @@ ppi_se <- wine_ppi$se[-1]
 
 ```{r}
 glm_exp <- glm(high_quality ~ ., family = "binomial", data = wine_exp)
-glm_nov <- glm(high_quality ~ ., family = "binomial", data = wine_nov)
-
-ppi_coef <- t(wine_ppi$est)[-1]
 expert_coef <- glm_exp$coefficients[-1]
-novice_coef <- glm_nov$coefficients[-1] 
-ppi_se <- wine_ppi$se[-1]
 expert_se <- summary(glm_exp)$coefficients[, "Std. Error"][-1]
+
+glm_nov <- glm(high_quality ~ ., family = "binomial", data = wine_nov)
+novice_coef <- glm_nov$coefficients[-1] 
 novice_se <- summary(glm_nov)$coefficients[, "Std. Error"][-1]
+
+glm_true <- glm(high_quality ~ ., family = "binomial", data = wine_true)
+true_coef <- glm_true$coefficients[-1] 
+true_se <- summary(glm_true)$coefficients[, "Std. Error"][-1]
 ```
 
 ## Arrange data for pltos
@@ -168,20 +152,24 @@ coef_df <- data.frame(
   expert_estimate = expert_coef,
   expert_se = expert_se,
   novice_estimate = novice_coef,
-  novice_se <- novice_se
-  ) %>%
+  novice_se = novice_se,
+  true_estimate = true_coef,
+  true_se = true_se
+) %>%
   mutate(
     ppi_lower = ppi_estimate - 1.96 * ppi_se,
     ppi_upper = ppi_estimate + 1.96 * ppi_se,
     expert_lower = expert_estimate - 1.96 * expert_se,
     expert_upper = expert_estimate + 1.96 * expert_se,
     novice_lower = novice_estimate - 1.96 * novice_se,
-    novice_upper = novice_estimate + 1.96 * novice_se
+    novice_upper = novice_estimate + 1.96 * novice_se,
+    true_lower = true_estimate - 1.96 * true_se,
+    true_upper = true_estimate + 1.96 * true_se
   ) %>%
   pivot_longer(
     cols = -term,
     names_to = c("model", ".value"),
-    names_pattern = "(ppi|expert|novice)_(.*)"
+    names_pattern = "(ppi|expert|novice|true)_(.*)"
   ) %>%
   mutate(
     odds_ratio = exp(estimate),
@@ -189,10 +177,10 @@ coef_df <- data.frame(
     or_upper = exp(upper),
     includes_one = ifelse(or_lower <= 1 & or_upper >= 1, "Yes", "No")
   ) %>% 
-  mutate(model = factor(model, levels = c("ppi", "expert", "novice")))
+  mutate(model = factor(model, levels = c("ppi", "expert", "novice", "true")))
 
 min_lower <- min(coef_df$or_lower, na.rm = TRUE)
-marker_y <- min_lower * 0.9
+marker_y <- min_lower * 0.09
 ```
 
 ## Plots
@@ -202,30 +190,29 @@ pd <- position_dodge(width = 0.5)
 
 ggplot(coef_df, aes(x = term, y = odds_ratio, color = model, shape = model)) +
   geom_point(size = 2, position = pd, stroke = 1.2) +
-  geom_errorbar(aes(ymin = or_lower, ymax = or_upper), width = 0.2, position = pd, size = 1) +
+  geom_errorbar(aes(ymin = or_lower, ymax = or_upper), width = 0.2, position = pd, linewidth = 1) +
   geom_hline(yintercept = 1, linetype = "dashed", color = "red", linewidth = 1) +
   geom_point(
     data = coef_df %>% filter(includes_one == "No"),
     aes(x = term, y = marker_y, color = model, shape = model),
-    size = 6,
-    shape = 95, 
+    size = 3,
     position = pd,
     inherit.aes = FALSE
   ) +
   scale_color_manual(
     name = "Model",
-    values = c("ppi" = "coral", "expert" = "steelblue", "novice" = "darkgreen")
+    values = c("ppi" = "darkgreen", "expert" = "coral", "novice" = "steelblue", "true" = "lightgray")
   ) +
   scale_shape_manual(
     name = "Model",
-    values = c("ppi" = 17, "expert" = 19, "novice" = 15)
+    values = c("ppi" = 17, "expert" = 19, "novice" = 15, "true" = 18)
   ) +
-  scale_y_log10() +
   labs(
-    title = "Odds Ratios with 95% CI: PPI++, Expert GLM, & Novice GLM",
+    title = "Odds Ratios with 95% CI: PPI++, Expert, Novice, & True GLM",
     x = "Predictor",
     y = "Odds Ratio (log scale)"
   ) +
+  scale_y_log10() + 
   theme_minimal() +
   theme(
     panel.spacing = unit(4, "lines"),
@@ -242,46 +229,48 @@ ggsave(
   bg = "white")
 ```
 
-# PTD Logistic Regression (Error in Y)
+# PTD Linear Regression (Error in X & Y)
 
-## US General Social Survery 
+## Load Data
 
-## Create Dataset
+```{r}
+forest_cover_files <- list.files("data/MOSAIKS_forest_cover", full.names = TRUE)
+forest_cover_names <- list.files("data/MOSAIKS_forest_cover", full.names = FALSE) %>% 
+  str_sub(1, -5)
+
+forest_cover_list <- map(forest_cover_files, read_csv)
+names(forest_cover_list) <- forest_cover_names
+```
+
+## Create Truncated Dataset
 
 ```{r}
 set.seed(1)
 
-# read and clean data
-usgss <- read.csv("data/us_social_survey.csv")[, -1] %>% 
-  filter(year >= 1990) %>% 
-  filter(age >= 40) %>% 
-  mutate(immigrant = immigrant == "yes") %>% 
-  mutate(city16 = city16 == "yes") %>% 
-  mutate(lowincome16 = lowincome16 == "yes") %>% 
-  mutate(iscaucasian = ethnicity == "cauc", .keep = "unused") %>% 
-  select(-agefirstbirth) %>% 
-  mutate(across(where(is.logical), as.numeric)) %>% 
-  mutate(    
-    age_std = as.numeric(scale(age)),
-    education_std = as.numeric(scale(education)),
-    siblings_std = as.numeric(scale(siblings)),
-    .keep = "unused"
-    )
-  
+test_cover <- forest_cover_list$scatter_obsAndPred_treecover %>% 
+  mutate(cover_truth = truth, cover_pred = preds, .keep = "unused") %>% 
+  select(-best_lambda)
+test_pop <- forest_cover_list$scatter_obsAndPred_population %>% 
+  mutate(pop_truth = truth, pop_pred = preds, .keep = "unused") %>% 
+  select(-best_lambda)
+test_elev <- forest_cover_list$scatter_obsAndPred_elevation %>% 
+  mutate(elev_truth = truth, elev_pred = preds, .keep = "unused") %>% 
+  select(-best_lambda)
 
-# separate data for gt and remote map
-usgss98 <- usgss %>% 
-  filter(year != 2002) %>% 
-  sample_n(2000)
+cover_df_full <- test_cover %>% 
+  inner_join(test_pop, by = c("lat", "lon")) %>% 
+  inner_join(test_elev, by = c("lat", "lon"))
 
-usgss02 <- usgss %>% 
-  filter(year == 2002)  %>% 
-  sample_n(100)
+full_sample_ind <- sample(seq_along(cover_df_full$lon), 10500)
+gt_sample_ind <- full_sample_ind[1:500]
 
-usgss_df <- rbind(usgss98, usgss02)
+cover_df_all <- cover_df_full[gt_sample_ind, 3:8]
+cover_df_mp <- cover_df_full[full_sample_ind, c("cover_pred", "pop_pred", "elev_truth")]
+cover_df_true <- cover_df_full[full_sample_ind, c("cover_truth", "pop_truth", "elev_truth")]
 
-# write dataset
-write_csv(usgss_df, file = "data/usgss02_labelled.csv")
+write.csv(cover_df_all, "data/forest_cover_all.csv")
+write.csv(cover_df_mp, "data/forest_cover_mp.csv")
+write.csv(cover_df_true, "data/forest_cover_true.csv")
 ```
 
 ## Read Dataset
@@ -289,114 +278,120 @@ write_csv(usgss_df, file = "data/usgss02_labelled.csv")
 ```{r}
 set.seed(1)
 
-usgss_df <- read_csv("data/usgss02_labelled.csv")
+# ground truth data with matching ~D~_hard values
+cover_df_all <- read_csv("data/forest_cover_all.csv")[, -1]
 
-usgss_98 <- usgss_df %>% 
-  filter(year != 2002) %>% 
-  select(-year)
-usgss_02 <- usgss_df %>% 
-  filter(year == 2002) %>% 
-  select(-year)
-```
+# map-product data
+cover_df_mp <- read_csv("data/forest_cover_mp.csv")[, -1] %>% 
+  rename(
+    cover = cover_pred,
+    pop = pop_pred,
+    elev = elev_truth
+    )
 
-## Predict/Impute Complete, Gold-Standard Dataset
+# ground truth data: D_easy, D_hard
+cover_df_gt <- cover_df_all %>% 
+  select(ends_with("truth")) %>% 
+  rename(
+    cover = cover_truth,
+    pop = pop_truth,
+    elev = elev_truth
+  )
 
-```{r}
-# create the ml imputation on old census data
-train_x <- usgss_98 %>% select(-kids) %>% data.matrix()
-train_y <- usgss_98$kids
-dtrain <- lgb.Dataset(data = train_x, label = train_y)
+# ground truth data: D_easy, ~D~_hard
+cover_df_compare <- cover_df_all %>% 
+  select(cover_pred, pop_pred, elev_truth) %>% 
+  rename(
+    cover = cover_pred,
+    pop = pop_pred,
+    elev = elev_truth
+  )
 
-params <- list(
-  objective = "regression",  
-  metric = "regression", 
-  learning_rate = 0.05,
-  num_leaves = 30,
-  max_depth = -1, 
-  feature_fraction = 0.8,
-  bagging_fraction = 0.8,
-  bagging_freq = 5
-)
-
-lgb_model <- lgb.train(
-  params,
-  dtrain,
-  nrounds = 1000,
-  valids = list(train = dtrain),
-  early_stopping_rounds = 50,
-  verbose = 0
-)
-
-# predict number of kids with new census data
-test_x <- usgss_02 %>% select(-kids) %>% data.matrix()
-usgss02_preds <- predict(lgb_model, test_x)
-
-usgss_imp <- usgss_02
-usgss_imp$kids <- usgss02_preds
+# ALL ground truth points (including those excluded from example); proxy for true param
+cover_df_true <- read_csv("data/forest_cover_true.csv")[, -1] %>% 
+  rename(
+    cover = cover_truth,
+    pop = pop_truth,
+    elev = elev_truth
+  )
 ```
 
 ## PTD
 
 ```{r}
 # ptd bootstrapping
-usgss_ptd <- PTD_bootstrap.glm(
-  true_data_completeSamp = usgss_02,
-  predicted_data_completeSamp = usgss_imp,
-  predicted_data_incompleteSamp = usgss_98,
-  regFormula.glm = "kids ~ .",
+cover_ptd <- PTD_bootstrap.glm(
+  true_data_completeSamp = cover_df_gt,             # ground-truth data
+  predicted_data_completeSamp = cover_df_compare,   # ground_truth easy with mp hard
+  predicted_data_incompleteSamp = cover_df_mp,      # full mp data
+  regFormula.glm = "cover ~ elev + pop",
   GLM_type = "linear",
   alpha = 0.05,
-  B = 2000,
+  B = 2000,                                         # number of bootstraps
   TuningScheme = "Optimal", 
   speedup = TRUE
 )
 
-# store coefficient estimates and confidence intervals
-ptd_ci <- usgss_ptd$PTD_Boot_CIs[-1, ]
-ptd_coef <- t(usgss_ptd$PTD_estimate)[-1]
+ptd_coef <- cover_ptd$PTD_estimate[-1]
+ptd_lower <- cover_ptd$PTD_Boot_CIs[-1, 1]
+ptd_upper <- cover_ptd$PTD_Boot_CIs[-1, 2]
 ```
 
-## Compare with normal glm
+## Compare with normal ols
 
 ```{r}
-glm_02 <- glm(kids ~ ., family = "gaussian", data = usgss_02)
-glm_98 <- glm(kids ~ ., family = "gaussian", data = usgss_98)
+# ground-truth only estiamtion
+ols_model <- lm(cover ~ elev + pop, data = cover_df_gt)
+ols_coef <- coef(ols_model)[-1]
+ols_ci <- confint(ols_model)[-1, ]
+ols_lower <- ols_ci[, 1]
+ols_upper <- ols_ci[, 2]
 
-usgss02_coef <- glm_02$coefficients[-1]
-usgss98_coef <- glm_98$coefficients[-1] 
+# naive estimation
+naive_model <- lm(cover ~ elev + pop, data = cover_df_mp)
+naive_coef <- coef(naive_model)[-1]
+naive_ci <- confint(naive_model)[-1, ]
+naive_lower <- naive_ci[, 1]
+naive_upper <- naive_ci[, 2]
 
-usgss02_ci <- confint(glm_02)[-1, ]
-usgss98_ci <- confint(glm_98)[-1, ]
+# true parameter (ALL gt points as proxy for true unknown parameter)
+true_model <- lm(cover ~ elev + pop, data = cover_df_true)
+true_coef <- coef(true_model)[-1]
+true_ci <- confint(true_model)[-1, ]
+true_lower <- true_ci[, 1]
+true_upper <- true_ci[, 2]
 ```
 
-## Arrange data for pltos
+## Arrange Data
 
 ```{r}
 coef_df <- data.frame(
-  term = names(usgss02_coef),
+  term = names(ols_coef),
   ptd_estimate = ptd_coef,
-  usgss02_estimate = usgss02_coef,
-  usgss98_estimate = usgss98_coef
-  ) %>%
-  mutate(
-    ptd_lower = ptd_ci[, 1],
-    ptd_upper = ptd_ci[, 2],
-    usgss02_lower = usgss02_ci[, 1],
-    usgss02_upper = usgss02_ci[, 2],
-    usgss98_lower = usgss98_ci[, 1],
-    usgss98_upper = usgss98_ci[, 2]
-  ) %>%
+  ptd_lower = ptd_lower,
+  ptd_upper = ptd_upper,
+  gt_estimate = ols_coef,
+  gt_lower = ols_lower,
+  gt_upper = ols_upper,
+  naive_estimate = naive_coef,
+  naive_lower = naive_lower,
+  naive_upper = naive_upper,
+  true_estimate = true_coef,
+  true_lower = true_lower,
+  true_upper = true_upper
+) %>%
   pivot_longer(
     cols = -term,
     names_to = c("model", ".value"),
-    names_pattern = "(ptd|usgss02|usgss98)_(.*)"
+    names_pattern = "(ptd|gt|naive|true)_(.*)"
   ) %>%
   mutate(
-    includes_zero = ifelse(lower <= 0 & upper >= 0, "Yes", "No")
+    includes_zero = ifelse(lower <= 0 & upper >= 0, "Yes", "No"),
+    model = factor(model, levels = c("ptd", "gt", "naive", "true"))
   )
 
 min_lower <- min(coef_df$lower, na.rm = TRUE)
-marker_y <- min_lower * 0.9
+marker_y <- min_lower - 0.1 * abs(min_lower)
 ```
 
 ## Plots
@@ -405,40 +400,36 @@ marker_y <- min_lower * 0.9
 pd <- position_dodge(width = 0.5)
 
 ggplot(coef_df, aes(x = term, y = estimate, color = model, shape = model)) +
-  geom_point(size = 2, position = pd, stroke = 1.2) +
-  geom_errorbar(aes(ymin = lower, ymax = upper), 
-                width = 0.2, position = pd, size = 1) +
-  geom_hline(yintercept = 0, linetype = "dashed", color = "red", size = 1) +
+  geom_point(size = 3, position = pd, stroke = 1.2) +
+  geom_errorbar(aes(ymin = lower, ymax = upper), width = 0.2, position = pd, size = 1) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red", linewidth = 1) +
   geom_point(
     data = coef_df %>% filter(includes_zero == "No"),
     aes(x = term, y = marker_y, color = model, shape = model),
-    size = 6,
-    shape = 95,
+    size = 3,
     position = pd,
     inherit.aes = FALSE
   ) +
   scale_color_manual(
     name = "Model",
-    values = c("ptd" = "coral", "usgss02" = "steelblue", "usgss98" = "darkgreen")
+    values = c("ptd" = "darkgreen", "gt" = "coral", "naive" = "steelblue", "true" = "lightgray")
   ) +
   scale_shape_manual(
     name = "Model",
-    values = c("ptd" = 17, "usgss02" = 19, "usgss98" = 15)
+    values = c("ptd" = 17, "gt" = 19, "naive" = 15, "true" = 18)
   ) +
   labs(
-    title = "Coefficient Estimates with 95% CI: PTD, USGSS 98 GLM, USGSS 02 GLM",
+    title = "Regression Coefficients with 95% CI: PTD, Ground-Truth, Naive, & True",
     x = "Predictor",
-    y = "Coefficient"
+    y = "Coefficient (β)"
   ) +
   theme_minimal() +
   theme(
-    panel.spacing = unit(4, "lines"),
     axis.text.x = element_text(angle = 45, hjust = 1)
   )
 
-# Save the plot
 ggsave(
-  filename = "usgss_ci_plot.png",
+  filename = "cover_coef_plot.png",
   path = "images",
   scale = 2,
   width = 1200,
@@ -447,3 +438,4 @@ ggsave(
   bg = "white"
 )
 ```
+
