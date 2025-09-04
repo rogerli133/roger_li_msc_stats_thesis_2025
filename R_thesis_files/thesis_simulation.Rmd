@@ -242,6 +242,12 @@ for (n in n_values) {
 save(coverage_results, width_results, file = "ci_results_simple.R")
 ```
 
+### Load Results
+
+```{r}
+load("simulation_results/ci_results_simple.R")
+```
+
 ### Plot CI Coverage
 
 #### Full Plot
@@ -266,11 +272,10 @@ ggplot(coverage_long, aes(x = n, y = coverage, color = method)) +
        x = "Sample Size (n)",
        y = "Coverage") +
   theme_minimal() +
-  theme(panel.spacing = unit(4, "lines")) +
-  coord_cartesian(ylim = c(0.85, 1))
+  theme(panel.spacing = unit(4, "lines"))
 
 ggsave(
-  "simple_ci_coverage_trunc.png",
+  "simple_ci_coverage.png",
   path = "images",
   scale = 2,
   width = 1200,
@@ -282,6 +287,15 @@ ggsave(
 #### Truncated Plot
 
 ```{r}
+coverage_long <- pivot_longer(
+  coverage_results,
+  cols = c("gt", "naive", "ppi", "ptd"),
+  names_to = "method",
+  values_to = "coverage"
+)
+
+pd <- position_dodge(width = 0.8)
+
 ggplot(coverage_long, aes(x = n, y = coverage, color = method)) +
   geom_point(size = 1.5, position = pd) +
   geom_line(position = pd, linewidth = 1) +
@@ -587,7 +601,15 @@ for (n in n_values) {
 save(coverage_results, width_results, file = "ci_results_2d.R")
 ```
 
+### Load Results 
+
+```{r}
+load("simulation_results/ci_results_2d.R")
+```
+
 ### Plot CI Coverage
+
+#### Full Plot
 
 ```{r}
 pd <- position_dodge(width = 0.8)
@@ -615,6 +637,43 @@ p_ci_coverage
 
 ggsave(
   "2d_ci_coverage.png",
+  path = "images",
+  scale = 2,
+  width = 1200,
+  height = 1200,
+  units = "px",
+  bg = "white")
+```
+
+#### Truncated Plot
+
+```{r}
+pd <- position_dodge(width = 0.8)
+
+coverage_long <- coverage_results %>%
+  pivot_wider(names_from = method, values_from = coverage) %>%
+  pivot_longer(cols = c("gt", "naive", "ppi", "ptd"), names_to = "method", values_to = "coverage")
+
+p_ci_coverage <- ggplot(coverage_long, aes(x = n, y = coverage, color = method)) +
+  geom_point(aes(shape = method), size = 3, position = pd) +
+  geom_line(position = pd, linewidth = 1) +
+  geom_hline(yintercept = 0.95, color = "red", linetype = "dotted", size = 1.3) +
+  facet_grid(setting ~ coef, scales = "free_y") +   # key change here
+  scale_color_manual(name = "method", values = c("coral", "steelblue", "darkgreen", "gray")) +
+  scale_shape_manual(name = "method", values = c(17, 19, 15, 13)) +
+  labs(
+    title = "Coverage Probability by Sample Size",
+    x = "Sample Size (n)",
+    y = "Coverage"
+  ) +
+  theme_minimal() +
+  theme(panel.spacing = unit(3, "lines")) +
+  coord_cartesian(ylim = c(0.90, 1))
+
+p_ci_coverage
+
+ggsave(
+  "2d_ci_coverage_trunc.png",
   path = "images",
   scale = 2,
   width = 1200,
@@ -869,7 +928,15 @@ for (n in n_values) {
 save(coverage_results, width_results, file = "ci_results_simple_large.R")
 ```
 
+### Load Results
+
+```{r}
+load("simulation_results/ci_results_large.R")
+```
+
 ### Plot CI Coverage
+
+#### Full Plot
 
 ```{r}
 coverage_long <- pivot_longer(
@@ -895,6 +962,42 @@ ggplot(coverage_long, aes(x = n, y = coverage, color = method)) +
 
 ggsave(
   "simple_ci_coverage_large.png",
+  path = "images",
+  scale = 2,
+  width = 1200,
+  height = 600,
+  units = "px",
+  bg = "white")
+```
+
+#### Truncated Plot
+
+```{r}
+coverage_long <- pivot_longer(
+  coverage_results,
+  cols = c("gt", "naive", "ppi", "ptd"),
+  names_to = "method",
+  values_to = "coverage"
+)
+
+pd <- position_dodge(width = 0.8)
+
+ggplot(coverage_long, aes(x = n, y = coverage, color = method)) +
+  geom_point(size = 1.5, position = pd) +
+  geom_line(position = pd, size = 1) +
+  scale_color_manual(name = "method", values = c("coral", "steelblue", "darkgreen", "gray")) +
+  geom_hline(yintercept = 0.95, color = "red", linetype = "dotted", size = 1.3) +
+  facet_wrap(~ setting, scales = "free_x") +
+  labs(title = "Coverage Probability by Sample Size",
+       x = "Sample Size (n)",
+       y = "Coverage") +
+  theme_minimal() +
+  theme(panel.spacing = unit(4, "lines")) +
+  coord_cartesian(ylim = c(0.90, 1))
+
+
+ggsave(
+  "simple_ci_coverage_large_trunc.png",
   path = "images",
   scale = 2,
   width = 1200,
