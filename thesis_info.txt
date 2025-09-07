@@ -1,0 +1,23 @@
+Title: Statistical Inference Using Prediction Powered Inference and Predict-Then-Debias
+
+Abstract: Prediction-powered inference (PPI) combines noisy proxy data with limited high-quality
+labels to deliver valid statistical inference. This thesis reviews PPI, its efficient extension
+PPI++, and the Predict-Then-Debias (PTD) estimator, which broadens applicability to
+settings where both covariates and outcomes may be measured with error.
+Through simulation studies in linear and spatial settings, both PPI++ and PTD improved
+confidence interval width relative to gold-standard-only inference while preserving empir-
+ical coverage close to theoretical guarantees. PPI++ was most effective when error was
+confined to the outcome, producing consistently narrower intervals, whereas PTD provided
+robustness when covariates were also corrupted.
+Applications reinforced these insights: in a wine quality dataset, PPI++ detected addi-
+tional significant predictors without false positives, and in a forest cover dataset, PTD
+produced estimates closer to the true parameters with tighter intervals.
+Overall, PPI++ is recommended when covariates are measured accurately and only the
+response is noisy, while PTD is better suited to more general error structures. These
+results underscore the promise of prediction-powered inference as a practical tool for re-
+search scenarios where abundant but imperfect data coexist with scarce gold-standard
+observations.
+
+Name: Roger Li
+ 
+Supervisor: Dr. Markus Kalisch

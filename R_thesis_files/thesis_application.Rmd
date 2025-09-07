@@ -8,6 +8,7 @@ output: pdf_document
 ```{r include=FALSE, results='hide'}
 library(knitr)
 library(tidyverse)
+library(xtable)
 library(gridExtra)
 library(grid)
 library(RColorBrewer)
@@ -101,11 +102,19 @@ wine_compare <- wine %>%
   select(-label)
 ```
 
+## View Dataset
+
+```{r}
+xtable(wine_compare[1:5, ], digits = 1)
+```
+
+
 ## PPI++
 
 ```{r}
 # ppi_plusplus_logistic requires matrices as inputs
 # data needs additional intercept column
+# note that column 12 is the response label
 X_l <- cbind(as.matrix(wine_exp[, -12]))
 Y_l <- as.matrix(wine_exp[, 12])
 f_l <- as.matrix(wine_compare[, 12])
@@ -315,6 +324,11 @@ cover_df_true <- read_csv("data/forest_cover_true.csv")[, -1] %>%
     elev = elev_truth
   )
 ```
+
+```{r}
+xtable(cover_df_compare[1:5, ], digits = 2)
+```
+
 
 ## PTD
 
